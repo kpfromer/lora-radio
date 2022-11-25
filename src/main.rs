@@ -304,53 +304,39 @@ mod app {
     #[idle(local = [lora], shared = [display_device])]
     fn idle(mut cx: idle::Context) -> ! {
         let lora = cx.local.lora;
+        let mut message_string: String<255> = String::new();
 
         loop {
-            match {
-                // lora.poll_irq(Some(30))
-                lora.poll_irq(Some(30 * 1000))
-                    .map_err(LoraRadioError)
-                    .and_then(|size| {
-                        lora.read_packet()
-                            .map(|buffer| (size, buffer))
-                            .map_err(LoraRadioError)
-                    })
-                    .map(|(size, buffer)| {
-                        let mut message_string: String<255> = String::new();
-                        for i in 0..size {
-                            message_string.push(buffer[i] as char).unwrap();
-                        }
-                        message_string
-                    }) //30 Second timeout
-                       // Received buffer. NOTE: 255 bytes are always returned
-            } {
-                Ok(message_string) => {
-                    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-                    let text = Text::new(
-                        message_string.as_str(),
-                        Point::zero(),
-                        MonoTextStyleBuilder::new()
-                            .font(&PROFONT_24_POINT)
-                            .text_color(Rgb565::GREEN)
-                            .background_color(Rgb565::BLACK)
-                            .build(),
-                    );
+            // 1 sec timeout (fails if no message in timeout)
+            if let Ok(size) = lora.poll_irq(Some(1000)) {
+                let buffer = lora.read_packet().unwrap();
 
-                    cx.shared.display_device.lock(|display_device| {
-                        LinearLayout::vertical(Chain::new(text))
-                            .with_alignment(horizontal::Center)
-                            .arrange()
-                            .align_to(&display_area, horizontal::Center, vertical::Center)
-                            .draw(&mut display_device.display)
-                            .unwrap()
-                    })
-                }
-                Err(error) => {
-                    cx.shared
-                        .display_device
-                        .lock(|display_device| show_error(error, display_device));
-                    panic!();
-                }
+                message_string.clear();
+                // Received buffer. NOTE: 255 bytes are always returned
+                buffer[0..size].iter().for_each(|&value| {
+                    message_string.push(value as char).unwrap();
+                });
+
+                let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+                let text = Text::new(
+                    message_string.as_str(),
+                    Point::zero(),
+                    MonoTextStyleBuilder::new()
+                        .font(&PROFONT_24_POINT)
+                        .text_color(Rgb565::GREEN)
+                        .background_color(Rgb565::BLACK)
+                        .build(),
+                );
+
+                cx.shared.display_device.lock(|display_device| {
+                    display_device.display.clear(Rgb565::BLACK).unwrap();
+                    LinearLayout::vertical(Chain::new(text))
+                        .with_alignment(horizontal::Center)
+                        .arrange()
+                        .align_to(&display_area, horizontal::Center, vertical::Center)
+                        .draw(&mut display_device.display)
+                        .unwrap()
+                })
             }
         }
     }
