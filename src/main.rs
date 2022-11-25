@@ -68,7 +68,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        // display_device: DisplayDevice<nrf52840_hal::pac::TIMER1>,
+        display_device: DisplayDevice<nrf52840_hal::pac::TIMER1>,
     }
 
     #[local]
@@ -113,48 +113,48 @@ mod app {
         let mut red_led = Led::new(port1.p1_01.degrade());
         red_led.off();
 
-        let mut white_led = Led::new(port0.p0_10.degrade());
+        let white_led = Led::new(port0.p0_10.degrade());
 
-        // let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
-        // let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
-        // let _tft_cs = port0.p0_12.into_push_pull_output(Level::Low);
-        // let tft_dc = port0.p0_13.into_push_pull_output(Level::Low);
-        // let tft_sck = port0.p0_14.into_push_pull_output(Level::Low).degrade();
-        // let tft_mosi = port0.p0_15.into_push_pull_output(Level::Low).degrade();
-        // let pins = hal::spim::Pins {
-        //     sck: Some(tft_sck),
-        //     miso: None,
-        //     mosi: Some(tft_mosi),
-        // };
-        // // https://github.com/almindor/st7789-examples/blob/master/examples/image.rs
-        // let spi = Spim::new(
-        //     cx.device.SPIM0,
-        //     pins,
-        //     hal::spim::Frequency::M8,
-        //     hal::spim::MODE_3,
-        //     122,
-        // );
-        // // Display interface from SPI and DC
-        // let display_interface = SPIInterfaceNoCS::new(spi, tft_dc);
-        // // Create driver
-        // let mut display = ST7789::new(
-        //     display_interface,
-        //     Some(tft_reset),
-        //     Some(tft_backlight),
-        //     240,
-        //     240,
-        // );
+        let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
+        let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
+        let _tft_cs = port0.p0_12.into_push_pull_output(Level::Low);
+        let tft_dc = port0.p0_13.into_push_pull_output(Level::Low);
+        let tft_sck = port0.p0_14.into_push_pull_output(Level::Low).degrade();
+        let tft_mosi = port0.p0_15.into_push_pull_output(Level::Low).degrade();
+        let pins = hal::spim::Pins {
+            sck: Some(tft_sck),
+            miso: None,
+            mosi: Some(tft_mosi),
+        };
+        // https://github.com/almindor/st7789-examples/blob/master/examples/image.rs
+        let spi = Spim::new(
+            cx.device.SPIM0,
+            pins,
+            hal::spim::Frequency::M8,
+            hal::spim::MODE_3,
+            122,
+        );
+        // Display interface from SPI and DC
+        let display_interface = SPIInterfaceNoCS::new(spi, tft_dc);
+        // Create driver
+        let mut display = ST7789::new(
+            display_interface,
+            Some(tft_reset),
+            Some(tft_backlight),
+            240,
+            240,
+        );
 
-        // // initialize
-        // let mut timer = Timer::new(cx.device.TIMER4);
-        // display.init(&mut timer).unwrap();
-        // // set default orientation
-        // display
-        //     .set_orientation(st7789::Orientation::LandscapeSwapped)
-        //     // .set_orientation(st7789::Orientation::Landscape)
-        //     .unwrap();
-        // display.clear(Rgb565::BLACK).unwrap();
-        // let mut display_device = DisplayDevice::new(display, Timer::new(cx.device.TIMER1));
+        // initialize
+        let mut timer = Timer::new(cx.device.TIMER4);
+        display.init(&mut timer).unwrap();
+        // set default orientation
+        display
+            .set_orientation(st7789::Orientation::LandscapeSwapped)
+            // .set_orientation(st7789::Orientation::Landscape)
+            .unwrap();
+        display.clear(Rgb565::BLACK).unwrap();
+        let mut display_device = DisplayDevice::new(display, Timer::new(cx.device.TIMER1));
 
         // let usb_bus = cx.local.usb_bus;
         // usb_bus.replace(UsbBusAllocator::new(Usbd::new(UsbPeripheral::new(
@@ -195,32 +195,29 @@ mod app {
         //     sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer).unwrap()
         // };
 
-        white_led.on();
         // TODO: move
-        // let text = Text::new(
-        //     "BOOTED",
-        //     Point::zero(),
-        //     MonoTextStyleBuilder::new()
-        //         .font(&PROFONT_24_POINT)
-        //         .text_color(Rgb565::GREEN)
-        //         .background_color(Rgb565::BLACK)
-        //         .build(),
-        // );
-        // DONE
+        let text = Text::new(
+            "BOOTED",
+            Point::zero(),
+            MonoTextStyleBuilder::new()
+                .font(&PROFONT_24_POINT)
+                .text_color(Rgb565::GREEN)
+                .background_color(Rgb565::BLACK)
+                .build(),
+        );
 
         // The layout
-        // let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-        // LinearLayout::vertical(Chain::new(text))
-        //     .with_alignment(horizontal::Center)
-        //     .arrange()
-        //     .align_to(&display_area, horizontal::Center, vertical::Center)
-        //     .draw(&mut display_device.display)
-        //     .unwrap();
+        let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+        LinearLayout::vertical(Chain::new(text))
+            .with_alignment(horizontal::Center)
+            .arrange()
+            .align_to(&display_area, horizontal::Center, vertical::Center)
+            .draw(&mut display_device.display)
+            .unwrap();
+        // DONE
 
         (
-            Shared { 
-                // display_device
-            },
+            Shared { display_device },
             Local {
                 white_led,
                 // usb_serial_device,
