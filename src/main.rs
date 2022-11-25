@@ -12,19 +12,25 @@ pub mod prelude {
     pub use crate::error::*;
 }
 
+use core::fmt::Write;
+
 use hal::Spim;
 use hal::Timer;
 
-use hal::gpio::p0::P0_05;
-use hal::gpio::p0::P0_07;
+use hal::gpio::p0::P0_02;
+use hal::gpio::p0::P0_28;
 use hal::gpio::Output;
 use hal::gpio::PushPull;
 use hal::pac::SPIM1;
 use hal::pac::TIMER4;
+
+use embedded_hal::blocking::spi::{Transfer, Write as SpiWrite};
+use hal::prelude::OutputPin;
 use heapless::{String, Vec};
 
 use nrf52840_hal as _;
 
+use profont::PROFONT_10_POINT;
 use rtic::app;
 
 use dwt_systick_monotonic::DwtSystick;
@@ -53,16 +59,58 @@ use usb_device::bus::UsbBusAllocator;
 
 use profont::PROFONT_24_POINT;
 
+use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
 use usb_serial::UsbSerialDevice;
 
 const FREQUENCY: i64 = 915;
 
-type LoraRadio = LoRa<Spim<SPIM1>, P0_05<Output<PushPull>>, P0_07<Output<PushPull>>, Timer<TIMER4>>;
+type LoraRadio = LoRa<Spim<SPIM1>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+
+fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
+    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+
+    let error_type = Text::new(
+        "Error",
+        Point::zero(),
+        MonoTextStyleBuilder::new()
+            .font(&PROFONT_10_POINT)
+            .text_color(Rgb565::RED)
+            .background_color(Rgb565::BLACK)
+            .build(),
+    );
+    let mut error_message_string: String<64> = String::new();
+    write!(error_message_string, "{:?}", error).unwrap();
+    let error_message = Text::new(
+        error_message_string.as_str(),
+        Point::zero(),
+        MonoTextStyleBuilder::new()
+            .font(&PROFONT_10_POINT)
+            .text_color(Rgb565::RED)
+            .background_color(Rgb565::BLACK)
+            .build(),
+    );
+    LinearLayout::vertical(Chain::new(error_type).append(error_message))
+        .with_alignment(horizontal::Center)
+        .arrange()
+        .align_to(&display_area, horizontal::Center, vertical::Center)
+        .draw(&mut display_device.display)
+        .unwrap();
+}
+
+#[derive(Debug)]
+enum LoraError<RadioError> {
+    LoraRadioError(RadioError),
+    LoraOverflow,
+}
+
+use LoraError::*;
 
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM3, SPIM3, SPIM2_SPIS2_SPI2])]
 mod app {
+
+    use profont::PROFONT_10_POINT;
 
     use super::*;
 
@@ -75,7 +123,7 @@ mod app {
     struct Local {
         white_led: Led,
         // usb_serial_device: UsbSerialDevice<'static, Usbd<UsbPeripheral<'static>>>,
-        // lora: LoraRadio,
+        lora: LoraRadio,
         // gpiote: Gpiote,
     }
 
@@ -113,7 +161,7 @@ mod app {
         let mut red_led = Led::new(port1.p1_01.degrade());
         red_led.off();
 
-        let white_led = Led::new(port0.p0_10.degrade());
+        let mut white_led = Led::new(port0.p0_10.degrade());
 
         let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
         let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
@@ -155,6 +203,15 @@ mod app {
             .unwrap();
         display.clear(Rgb565::BLACK).unwrap();
         let mut display_device = DisplayDevice::new(display, Timer::new(cx.device.TIMER1));
+        // The layout
+        let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+        // LinearLayout::vertical(Chain::new(text).append(lt))
+        //     .with_alignment(horizontal::Center)
+        //     .arrange()
+        //     .align_to(&display_area, horizontal::Center, vertical::Center)
+        //     .draw(&mut display_device.display)
+        //     .unwrap();
+        // DONE
 
         // let usb_bus = cx.local.usb_bus;
         // usb_bus.replace(UsbBusAllocator::new(Usbd::new(UsbPeripheral::new(
@@ -170,30 +227,50 @@ mod app {
         gpiote.port().input_pin(&btn).low();
         gpiote.port().enable_interrupt();
 
-        // let lora = {
-        //     let sck = port0.p0_18.into_push_pull_output(Level::Low).degrade();
-        //     let miso = port0.p0_06.into_floating_input().degrade();
-        //     let mosi = port0.p0_26.into_push_pull_output(Level::Low).degrade();
+        let mut lora = {
+            // let sck = port0.p0_18.into_push_pull_output(Level::Low).degrade();
+            // let miso = port0.p0_06.into_floating_input().degrade();
+            // let mosi = port0.p0_26.into_push_pull_output(Level::Low).degrade();
 
-        //     let reset = port0.p0_07.into_push_pull_output(Level::Low);
-        //     let cs = port0.p0_05.into_push_pull_output(Level::Low);
+            let sck = port0.p0_04.into_push_pull_output(Level::Low).degrade();
+            let miso = port0.p0_05.into_floating_input().degrade();
+            let mosi = port0.p0_03.into_push_pull_output(Level::Low).degrade();
 
-        //     let pins = hal::spim::Pins {
-        //         sck: Some(sck),
-        //         miso: Some(miso),
-        //         mosi: Some(mosi),
-        //     };
+            let cs = port0.p0_28.into_push_pull_output(Level::Low);
+            let reset = port0.p0_02.into_push_pull_output(Level::Low);
 
-        //     let spi = Spim::new(
-        //         cx.device.SPIM1,
-        //         pins,
-        //         hal::spim::Frequency::M8,
-        //         hal::spim::MODE_0,
-        //         122,
-        //     );
+            let pins = hal::spim::Pins {
+                sck: Some(sck),
+                miso: Some(miso),
+                mosi: Some(mosi),
+            };
 
-        //     sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer).unwrap()
-        // };
+            let spi = Spim::new(
+                cx.device.SPIM1,
+                pins,
+                hal::spim::Frequency::M4,
+                hal::spim::MODE_0,
+                122,
+            );
+
+            match sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer) {
+                Ok(l) => l,
+                Err(error) => {
+                    show_error(error, &mut display_device);
+                    panic!();
+                }
+            }
+        };
+
+        // let mut v: String<128> = String::new();
+
+        // let poll = lora.poll_irq(Some(40));
+        // if let Ok(size) = poll {
+        //     let buffer = lora.read_packet().unwrap();
+        //     for i in 0..size {
+        //         v.push(buffer[i] as char).unwrap();
+        //     }
+        // }
 
         // TODO: move
         let text = Text::new(
@@ -205,27 +282,77 @@ mod app {
                 .background_color(Rgb565::BLACK)
                 .build(),
         );
-
-        // The layout
-        let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
         LinearLayout::vertical(Chain::new(text))
             .with_alignment(horizontal::Center)
             .arrange()
             .align_to(&display_area, horizontal::Center, vertical::Center)
             .draw(&mut display_device.display)
             .unwrap();
-        // DONE
 
         (
             Shared { display_device },
             Local {
                 white_led,
                 // usb_serial_device,
-                // lora,
+                lora,
                 // gpiote,
             },
             init::Monotonics(monotonic),
         )
+    }
+
+    #[idle(local = [lora], shared = [display_device])]
+    fn idle(mut cx: idle::Context) -> ! {
+        let lora = cx.local.lora;
+
+        loop {
+            match {
+                // lora.poll_irq(Some(30))
+                lora.poll_irq(Some(30 * 1000))
+                    .map_err(LoraRadioError)
+                    .and_then(|size| {
+                        lora.read_packet()
+                            .map(|buffer| (size, buffer))
+                            .map_err(LoraRadioError)
+                    })
+                    .map(|(size, buffer)| {
+                        let mut message_string: String<255> = String::new();
+                        for i in 0..size {
+                            message_string.push(buffer[i] as char).unwrap();
+                        }
+                        message_string
+                    }) //30 Second timeout
+                       // Received buffer. NOTE: 255 bytes are always returned
+            } {
+                Ok(message_string) => {
+                    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+                    let text = Text::new(
+                        message_string.as_str(),
+                        Point::zero(),
+                        MonoTextStyleBuilder::new()
+                            .font(&PROFONT_24_POINT)
+                            .text_color(Rgb565::GREEN)
+                            .background_color(Rgb565::BLACK)
+                            .build(),
+                    );
+
+                    cx.shared.display_device.lock(|display_device| {
+                        LinearLayout::vertical(Chain::new(text))
+                            .with_alignment(horizontal::Center)
+                            .arrange()
+                            .align_to(&display_area, horizontal::Center, vertical::Center)
+                            .draw(&mut display_device.display)
+                            .unwrap()
+                    })
+                }
+                Err(error) => {
+                    cx.shared
+                        .display_device
+                        .lock(|display_device| show_error(error, display_device));
+                    panic!();
+                }
+            }
+        }
     }
 
     // #[task(binds = GPIOTE, local = [gpiote], priority = 5)]
