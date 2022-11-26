@@ -10,3 +10,12 @@ linux-embedded-hal = "0.3.2"
 embedded-hal = "0.2.7"
 sx127x_lora = "0.3.1"
 rppal = "0.14.0"
+
+heapless = "0.7.16"
+postcard = { version = "1.0.2", features = [
+  "alloc",
+  "postcard-derive",
+  "use-std",
+], default-features = false }
+serde = "1.0.147"
+shared = { path = "../shared/"  }

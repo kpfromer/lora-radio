@@ -110,7 +110,7 @@ use LoraError::*;
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM3, SPIM3, SPIM2_SPIS2_SPI2])]
 mod app {
 
-    use profont::PROFONT_10_POINT;
+    use profont::{PROFONT_10_POINT, PROFONT_14_POINT};
 
     use super::*;
 
@@ -313,30 +313,33 @@ mod app {
 
                 message_string.clear();
                 // Received buffer. NOTE: 255 bytes are always returned
-                buffer[0..size].iter().for_each(|&value| {
-                    message_string.push(value as char).unwrap();
-                });
+                // buffer[0..size].iter().for_each(|&value| {
+                //     message_string.push(value as char).unwrap();
+                // });
+                if let Ok(value) = postcard::from_bytes::<shared::Test>(&buffer[..size]) {
+                    write!(message_string, "{:?}", value).unwrap();
 
-                let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-                let text = Text::new(
-                    message_string.as_str(),
-                    Point::zero(),
-                    MonoTextStyleBuilder::new()
-                        .font(&PROFONT_24_POINT)
-                        .text_color(Rgb565::GREEN)
-                        .background_color(Rgb565::BLACK)
-                        .build(),
-                );
+                    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+                    let text = Text::new(
+                        message_string.as_str(),
+                        Point::zero(),
+                        MonoTextStyleBuilder::new()
+                            .font(&PROFONT_10_POINT)
+                            .text_color(Rgb565::GREEN)
+                            .background_color(Rgb565::BLACK)
+                            .build(),
+                    );
 
-                cx.shared.display_device.lock(|display_device| {
-                    display_device.display.clear(Rgb565::BLACK).unwrap();
-                    LinearLayout::vertical(Chain::new(text))
-                        .with_alignment(horizontal::Center)
-                        .arrange()
-                        .align_to(&display_area, horizontal::Center, vertical::Center)
-                        .draw(&mut display_device.display)
-                        .unwrap()
-                })
+                    cx.shared.display_device.lock(|display_device| {
+                        display_device.display.clear(Rgb565::BLACK).unwrap();
+                        LinearLayout::vertical(Chain::new(text))
+                            .with_alignment(horizontal::Center)
+                            .arrange()
+                            .align_to(&display_area, horizontal::Center, vertical::Center)
+                            .draw(&mut display_device.display)
+                            .unwrap()
+                    })
+                }
             }
         }
     }

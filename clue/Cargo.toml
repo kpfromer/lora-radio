@@ -30,18 +30,9 @@ profont = "0.6.1"
 
 sx127x_lora = "0.3.1"
 
-# Uncomment for the panic example.
-# panic-itm = "0.4.1"
-
-# Uncomment for the allocator example.
-# alloc-cortex-m = "0.4.0"
-
-# Uncomment for the device example.
-# Update `memory.x`, set target to `thumbv7em-none-eabihf` in `.cargo/config`,
-# and then use `cargo build --examples device` to build it.
-# [dependencies.stm32f3]
-# features = ["stm32f303", "rt"]
-# version = "0.7.1"
+postcard = "1.0.1"
+serde = { version = "1.0.147", default-features = false }
+shared = { path = "../shared/", default-features = false }
 
 # this lets you use `cargo fix`!
 [[bin]]

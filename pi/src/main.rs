@@ -48,16 +48,29 @@ fn main() {
 
     lora.set_tx_power(17, 1).expect("Failed to boost"); //Using PA_BOOST. See your board for correct pin.
 
-    // let message = "Hello, world!";
-    let args: Vec<String> = env::args().collect();
-    let message = args[1].clone();
-    let mut buffer = [0; 255];
-    for (i, c) in message.chars().enumerate() {
-        buffer[i] = c as u8;
-    }
+    // ----------
 
-    let transmit = lora.transmit_payload(buffer, message.len());
+    let t = shared::Test {
+        name: "Name".into(),
+        id: 0,
+        command: shared::Command::Temp,
+    };
+    let mut buffer = [0; 255];
+    let ser = postcard::to_slice(&t, &mut buffer).unwrap();
+    let ser_len = ser.len();
+    println!("Transmitting command: {:?}", t);
+
+    // let message = "Hello, world!";
+    // let args: Vec<String> = env::args().collect();
+    // let message = args[1].clone();
+    // let mut buffer = [0; 255];
+    // for (i, c) in message.chars().enumerate() {
+    //     buffer[i] = c as u8;
+    // }
+
+    let transmit = lora.transmit_payload(buffer, ser_len);
     transmit.expect("Failed to send payload");
 
-    println!("Written \"{}\" message", message);
+    println!("Done!");
+    // println!("Written \"{}\" message", message);
 }
