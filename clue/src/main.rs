@@ -3,6 +3,7 @@
 
 pub mod display;
 pub mod error;
+pub mod i2c;
 pub mod led;
 pub mod panic;
 pub mod soil;
@@ -14,6 +15,8 @@ pub mod prelude {
 
 use core::fmt::Write;
 
+use i2c::*;
+
 use hal::Spim;
 use hal::Timer;
 
@@ -21,8 +24,9 @@ use hal::gpio::p0::P0_02;
 use hal::gpio::p0::P0_28;
 use hal::gpio::Output;
 use hal::gpio::PushPull;
-use hal::pac::SPIM1;
+use hal::pac::SPIM2;
 use hal::pac::TIMER4;
+use hal::twim::Twim;
 
 use embedded_hal::blocking::spi::{Transfer, Write as SpiWrite};
 use hal::prelude::OutputPin;
@@ -62,11 +66,21 @@ use profont::PROFONT_24_POINT;
 use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
-use usb_serial::UsbSerialDevice;
+// use shared_bus;
 
 const FREQUENCY: i64 = 915;
 
-type LoraRadio = LoRa<Spim<SPIM1>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+// pub const I2C_GYROACCEL: u8 = 0x6A;
+// pub const I2C_MAGNETOMETER: u8 = 0x1c;
+// pub const I2C_GESTURE: u8 = 0x39;
+// pub const I2C_HUMIDITY: u8 = 0x44;
+pub const I2C_TEMPPRESSURE: u8 = 0x77;
+
+type LoraRadio = LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+// type TempPressureSensor = bmp280_rs::BMP280<
+//     shared_bus::I2cProxy<shared_bus::NullMutex<Twim<hal::pac::TWIM1>>>,
+//     bmp280_rs::ModeSleep,
+// >;
 
 fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
     let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
@@ -99,14 +113,6 @@ fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal
         .unwrap();
 }
 
-#[derive(Debug)]
-enum LoraError<RadioError> {
-    LoraRadioError(RadioError),
-    LoraOverflow,
-}
-
-use LoraError::*;
-
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM3, SPIM3, SPIM2_SPIS2_SPI2])]
 mod app {
 
@@ -124,6 +130,7 @@ mod app {
         white_led: Led,
         // usb_serial_device: UsbSerialDevice<'static, Usbd<UsbPeripheral<'static>>>,
         lora: LoraRadio,
+        i2c: I2CSensors,
         // gpiote: Gpiote,
     }
 
@@ -143,7 +150,10 @@ mod app {
         }
     }
 
-    #[init(local=[clocks: Option<Clocks<ExternalOscillator, Internal, LfOscStopped>> = None, usb_bus: Option<UsbBusAllocator<Usbd<UsbPeripheral<'static>>>> = None])]
+    #[init(local=[
+        clocks: Option<Clocks<ExternalOscillator, Internal, LfOscStopped>> = None,
+        usb_bus: Option<UsbBusAllocator<Usbd<UsbPeripheral<'static>>>> = None
+    ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         let mut debug_control_block = cx.core.DCB;
         let clocks = cx.local.clocks;
@@ -227,11 +237,7 @@ mod app {
         gpiote.port().input_pin(&btn).low();
         gpiote.port().enable_interrupt();
 
-        let mut lora = {
-            // let sck = port0.p0_18.into_push_pull_output(Level::Low).degrade();
-            // let miso = port0.p0_06.into_floating_input().degrade();
-            // let mosi = port0.p0_26.into_push_pull_output(Level::Low).degrade();
-
+        let lora = {
             let sck = port0.p0_04.into_push_pull_output(Level::Low).degrade();
             let miso = port0.p0_05.into_floating_input().degrade();
             let mosi = port0.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -246,7 +252,7 @@ mod app {
             };
 
             let spi = Spim::new(
-                cx.device.SPIM1,
+                cx.device.SPIM2,
                 pins,
                 hal::spim::Frequency::M4,
                 hal::spim::MODE_0,
@@ -262,15 +268,16 @@ mod app {
             }
         };
 
-        // let mut v: String<128> = String::new();
-
-        // let poll = lora.poll_irq(Some(40));
-        // if let Ok(size) = poll {
-        //     let buffer = lora.read_packet().unwrap();
-        //     for i in 0..size {
-        //         v.push(buffer[i] as char).unwrap();
-        //     }
-        // }
+        let i2c = {
+            // NOTE: TWIM0 interfears with spim0, twim1 interfears with spim1
+            // https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Ftwim.html
+            let pins = hal::twim::Pins {
+                scl: port0.p0_25.into_floating_input().degrade(),
+                sda: port0.p0_24.into_floating_input().degrade(),
+            };
+            let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
+            I2CSensors::new(sensor_i2c)
+        };
 
         // TODO: move
         let text = Text::new(
@@ -289,16 +296,51 @@ mod app {
             .draw(&mut display_device.display)
             .unwrap();
 
+        show_temp::spawn_after(3.secs()).unwrap();
+
         (
             Shared { display_device },
             Local {
                 white_led,
                 // usb_serial_device,
                 lora,
+                i2c,
                 // gpiote,
             },
             init::Monotonics(monotonic),
         )
+    }
+
+    #[task(priority = 2, local = [i2c], shared = [display_device])]
+    fn show_temp(mut cx: show_temp::Context) {
+        let mut message_string: String<255> = String::new();
+
+        let (temp, _pressure) = cx.local.i2c.read_temp().unwrap();
+
+        write!(message_string, "Temp: {}.{:02} C", temp / 100, temp % 100).unwrap();
+
+        let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+        let text = Text::new(
+            message_string.as_str(),
+            Point::zero(),
+            MonoTextStyleBuilder::new()
+                .font(&PROFONT_10_POINT)
+                .text_color(Rgb565::GREEN)
+                .background_color(Rgb565::BLACK)
+                .build(),
+        );
+
+        cx.shared.display_device.lock(|display_device| {
+            display_device.display.clear(Rgb565::BLACK).unwrap();
+            LinearLayout::vertical(Chain::new(text))
+                .with_alignment(horizontal::Center)
+                .arrange()
+                .align_to(&display_area, horizontal::Center, vertical::Center)
+                .draw(&mut display_device.display)
+                .unwrap()
+        });
+
+        show_temp::spawn_after(5.secs()).unwrap();
     }
 
     #[idle(local = [lora], shared = [display_device])]
