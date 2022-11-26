@@ -29,7 +29,6 @@ use hal::pac::TIMER4;
 use hal::twim::Twim;
 
 use embedded_hal::blocking::spi::{Transfer, Write as SpiWrite};
-use hal::prelude::OutputPin;
 use heapless::{String, Vec};
 
 use nrf52840_hal as _;
@@ -116,7 +115,7 @@ fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM3, SPIM3, SPIM2_SPIS2_SPI2])]
 mod app {
 
-    use profont::{PROFONT_10_POINT, PROFONT_14_POINT};
+    use profont::PROFONT_10_POINT;
 
     use super::*;
 
@@ -168,10 +167,7 @@ mod app {
         let port0 = hal::gpio::p0::Parts::new(cx.device.P0);
         let port1 = hal::gpio::p1::Parts::new(cx.device.P1);
 
-        let mut red_led = Led::new(port1.p1_01.degrade());
-        red_led.off();
-
-        let mut white_led = Led::new(port0.p0_10.degrade());
+        let white_led = Led::new(port0.p0_10.degrade());
 
         let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
         let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
@@ -202,7 +198,7 @@ mod app {
             240,
             240,
         );
-
+        // TODO: move
         // initialize
         let mut timer = Timer::new(cx.device.TIMER4);
         display.init(&mut timer).unwrap();
@@ -215,21 +211,21 @@ mod app {
         let mut display_device = DisplayDevice::new(display, Timer::new(cx.device.TIMER1));
         // The layout
         let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-        // LinearLayout::vertical(Chain::new(text).append(lt))
-        //     .with_alignment(horizontal::Center)
-        //     .arrange()
-        //     .align_to(&display_area, horizontal::Center, vertical::Center)
-        //     .draw(&mut display_device.display)
-        //     .unwrap();
-        // DONE
-
-        // let usb_bus = cx.local.usb_bus;
-        // usb_bus.replace(UsbBusAllocator::new(Usbd::new(UsbPeripheral::new(
-        //     cx.device.USBD,
-        //     clocks.as_ref().unwrap(),
-        // ))));
-
-        // let usb_serial_device = UsbSerialDevice::new(usb_bus.as_ref().unwrap());
+        let text = Text::new(
+            "BOOTED",
+            Point::zero(),
+            MonoTextStyleBuilder::new()
+                .font(&PROFONT_24_POINT)
+                .text_color(Rgb565::GREEN)
+                .background_color(Rgb565::BLACK)
+                .build(),
+        );
+        LinearLayout::vertical(Chain::new(text))
+            .with_alignment(horizontal::Center)
+            .arrange()
+            .align_to(&display_area, horizontal::Center, vertical::Center)
+            .draw(&mut display_device.display)
+            .unwrap();
 
         // GPIO interrupts
         let btn = port1.p1_02.into_pullup_input().degrade();
@@ -278,23 +274,6 @@ mod app {
             let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
             I2CSensors::new(sensor_i2c)
         };
-
-        // TODO: move
-        let text = Text::new(
-            "BOOTED",
-            Point::zero(),
-            MonoTextStyleBuilder::new()
-                .font(&PROFONT_24_POINT)
-                .text_color(Rgb565::GREEN)
-                .background_color(Rgb565::BLACK)
-                .build(),
-        );
-        LinearLayout::vertical(Chain::new(text))
-            .with_alignment(horizontal::Center)
-            .arrange()
-            .align_to(&display_area, horizontal::Center, vertical::Center)
-            .draw(&mut display_device.display)
-            .unwrap();
 
         show_temp::spawn_after(3.secs()).unwrap();
 
