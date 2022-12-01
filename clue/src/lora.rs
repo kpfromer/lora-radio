@@ -1,11 +1,14 @@
 use crate::{prelude::*, LoraRadio};
 
-pub fn read_lora<'de, T>(lora: &mut LoraRadio, buffer: &'de mut [u8; 255]) -> Result<T>
+/// In ms
+const LORA_TIMEOUT: i32 = 1000;
+
+pub fn read_lora<'de, T>(lora: &mut LoraRadio, buffer: &'de mut [u8; 255]) -> AppResult<T>
 where
     T: serde::Deserialize<'de>,
 {
     let size = lora
-        .poll_irq(Some(1000))
+        .poll_irq(Some(LORA_TIMEOUT))
         .map_err(|_| AppError::LoraError(LoraError::Timeout))?;
 
     // Ensures that deseralized data is stored in same lifetime
@@ -21,7 +24,7 @@ where
     Ok(value.msg)
 }
 
-pub fn write_lora<T>(lora: &mut LoraRadio, data: &T) -> Result<()>
+pub fn write_lora<T>(lora: &mut LoraRadio, data: &T) -> AppResult<()>
 where
     T: serde::Serialize,
 {

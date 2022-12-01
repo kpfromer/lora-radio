@@ -115,7 +115,7 @@ where
     // }
 
     #[inline]
-    pub fn read_line(&mut self, chars: &mut Vec<u8, 64>) -> Result<()> {
+    pub fn read_line(&mut self, chars: &mut Vec<u8, 64>) -> AppResult<()> {
         chars.clear();
 
         loop {
@@ -151,7 +151,7 @@ where
     }
 
     #[inline]
-    pub fn write_chars(&mut self, chars: &[u8]) -> Result<()> {
+    pub fn write_chars(&mut self, chars: &[u8]) -> AppResult<()> {
         // wait for ability to write
         while !self.usb_device.poll(&mut [&mut self.serial_port]) {}
 

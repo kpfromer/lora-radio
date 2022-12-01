@@ -90,14 +90,18 @@ fn read_lora(lora: &mut LoraRadio) -> Result<shared::TempPressureSensorReport> {
 fn main() -> Result<()> {
     let mut lora = create_lora()?;
 
-    write_lora(&mut lora, shared::Command::GetTempPressure)?;
-    let message = read_lora(&mut lora)?;
+    println!("Started listening");
 
-    let temp = message.temperature.get::<degree_fahrenheit>();
-    let pressure = message.pressure.get::<atmosphere>();
+    loop {
+        let message = read_lora(&mut lora)?;
 
-    println!("Temperature: {} F", temp);
-    println!("Pressure: {} atmosphere", pressure);
+        let temp = message.temperature.get::<degree_fahrenheit>();
+        let pressure = message.pressure.get::<atmosphere>();
+        println!(
+            "Temperature: {} F - Pressure: {} atmosphere",
+            temp, pressure
+        );
 
-    Ok(())
+        write_lora(&mut lora, shared::Command::GetTempPressure)?;
+    }
 }

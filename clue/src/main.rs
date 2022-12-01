@@ -296,6 +296,8 @@ mod app {
             I2CSensors::new(sensor_i2c)
         };
 
+        handle_broadcast::spawn().unwrap();
+
         (
             Shared { display_device },
             Local {
@@ -308,41 +310,37 @@ mod app {
         )
     }
 
-    #[idle(local = [lora, timer, i2c], shared = [display_device])]
-    fn idle(mut cx: idle::Context) -> ! {
-        let lora = cx.local.lora;
-        let timer = cx.local.timer;
-        let i2c = cx.local.i2c;
+    #[task(local = [lora, timer, i2c], shared = [display_device])]
+    fn handle_broadcast(mut cx: handle_broadcast::Context) {
+        let handle_broadcast::LocalResources { lora, timer, i2c } = cx.local;
 
-        loop {
-            // 1 sec timeout (fails if no message in timeout)
-            let mut data_buffer = [0u8; 255];
-            match read_lora(lora, &mut data_buffer) {
-                Ok(shared::Command::GetTempPressure) => {
-                    cx.shared
-                        .display_device
-                        .lock(|display_device| show_text("Getting temperature", display_device));
+        let (temperature, pressure) = i2c.read_temp().unwrap();
+        write_lora(
+            lora,
+            &shared::Transmission {
+                src: shared::DevAddr(1),
+                msg: shared::TempPressureSensorReport {
+                    temperature,
+                    pressure,
+                },
+            },
+        )
+        .unwrap();
+        timer.delay_ms(50u32); // ensure gap between transmissions
 
-                    let (temperature, pressure) = i2c.read_temp().unwrap();
-                    write_lora(
-                        lora,
-                        &shared::Transmission {
-                            src: shared::DevAddr(1),
-                            msg: shared::TempPressureSensorReport {
-                                temperature,
-                                pressure,
-                            },
-                        },
-                    )
-                    .unwrap();
-
-                    timer.delay_ms(50u32); // ensure gap between transmissions
-                }
-                // Continue on timeout
-                Err(AppError::LoraError(LoraError::Timeout)) => {}
-                _ => panic!(),
+        let mut data_buffer = [0u8; 255];
+        match read_lora::<shared::Command>(lora, &mut data_buffer) {
+            Ok(shared::Command::GetTempPressure) => {
+                cx.shared
+                    .display_device
+                    .lock(|display_device| show_text("Getting temperature", display_device));
             }
+            // Continue on timeout
+            Err(AppError::LoraError(LoraError::Timeout)) => {}
+            _ => panic!(),
         }
+
+        handle_broadcast::spawn_after(5.secs()).unwrap();
     }
 
     // TODO: gpiote toggle display

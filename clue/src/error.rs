@@ -3,7 +3,7 @@
 use core::convert::Infallible;
 
 // pub type FResult =
-pub type Result<T> = core::result::Result<T, AppError>;
+pub type AppResult<T> = core::result::Result<T, AppError>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum LoraError {

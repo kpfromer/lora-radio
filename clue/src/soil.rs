@@ -24,7 +24,7 @@ impl Soil {
         }
     }
 
-    pub fn soil_moisture_percentage(&mut self) -> Result<u8> {
+    pub fn soil_moisture_percentage(&mut self) -> AppResult<u8> {
         // self.adc
         //     .read(&mut self.pin)
         //     .map_err(|_| AppError::SoilReadingError)
@@ -36,7 +36,7 @@ impl Soil {
 
     // TODO: take 10 samples to average?
 
-    // fn soil_measure_percentage<const N: usize>(&mut self) -> Result<u8, AppError> {
+    // fn soil_measure_percentage<const N: usize>(&mut self) -> AppResult<u8, AppError> {
     //     let mut items = [0_f32; N];
     // }
 }
