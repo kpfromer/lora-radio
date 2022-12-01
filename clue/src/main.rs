@@ -310,9 +310,14 @@ mod app {
         )
     }
 
-    #[task(local = [lora, timer, i2c], shared = [display_device])]
+    #[task(local = [lora, timer, i2c, white_led], shared = [display_device])]
     fn handle_broadcast(mut cx: handle_broadcast::Context) {
-        let handle_broadcast::LocalResources { lora, timer, i2c } = cx.local;
+        let handle_broadcast::LocalResources {
+            white_led,
+            lora,
+            timer,
+            i2c,
+        } = cx.local;
 
         let (temperature, pressure) = i2c.read_temp().unwrap();
         write_lora(
@@ -330,13 +335,18 @@ mod app {
 
         let mut data_buffer = [0u8; 255];
         match read_lora::<shared::Command>(lora, &mut data_buffer) {
-            Ok(shared::Command::GetTempPressure) => {
-                cx.shared
-                    .display_device
-                    .lock(|display_device| show_text("Getting temperature", display_device));
+            Ok(shared::Command::Led(status)) => {
+                if status {
+                    white_led.on()
+                } else {
+                    white_led.off()
+                }
+                // cx.shared
+                //     .display_device
+                //     .lock(|display_device| show_text("Getting temperature", display_device));
             }
-            // Continue on timeout
-            Err(AppError::LoraError(LoraError::Timeout)) => {}
+            // Continue on timeout or any other lora error
+            Err(AppError::LoraError(_)) => {}
             _ => panic!(),
         }
 

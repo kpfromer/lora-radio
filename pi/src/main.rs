@@ -92,6 +92,7 @@ fn main() -> Result<()> {
 
     println!("Started listening");
 
+    let mut status = true;
     loop {
         let message = read_lora(&mut lora)?;
 
@@ -102,6 +103,8 @@ fn main() -> Result<()> {
             temp, pressure
         );
 
-        write_lora(&mut lora, shared::Command::GetTempPressure)?;
+        write_lora(&mut lora, shared::Command::Led(status))?;
+
+        status = !status;
     }
 }
