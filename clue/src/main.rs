@@ -15,6 +15,7 @@ pub mod prelude {
 
 use core::fmt::Write;
 
+use hal::pac::SPIM1;
 use i2c::*;
 
 use hal::Spim;
@@ -25,7 +26,7 @@ use hal::gpio::p0::P0_28;
 use hal::gpio::Output;
 use hal::gpio::PushPull;
 use hal::pac::SPIM2;
-use hal::pac::TIMER4;
+use hal::pac::{TIMER3, TIMER4};
 use hal::twim::Twim;
 
 use heapless::String;
@@ -64,6 +65,9 @@ use profont::PROFONT_24_POINT;
 use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
+
+use uom::si::f32::ThermodynamicTemperature;
+use uom::si::thermodynamic_temperature::degree_celsius;
 // use shared_bus;
 
 const FREQUENCY: i64 = 915;
@@ -74,11 +78,32 @@ const FREQUENCY: i64 = 915;
 // pub const I2C_HUMIDITY: u8 = 0x44;
 pub const I2C_TEMPPRESSURE: u8 = 0x77;
 
-type LoraRadio = LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+type LoraRadio = LoRa<Spim<SPIM1>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
 // type TempPressureSensor = bmp280_rs::BMP280<
 //     shared_bus::I2cProxy<shared_bus::NullMutex<Twim<hal::pac::TWIM1>>>,
 //     bmp280_rs::ModeSleep,
 // >;
+
+fn show_text(text: &str, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
+    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+    let text = Text::new(
+        text,
+        Point::zero(),
+        MonoTextStyleBuilder::new()
+            .font(&PROFONT_10_POINT)
+            .text_color(Rgb565::GREEN)
+            .background_color(Rgb565::BLACK)
+            .build(),
+    );
+
+    display_device.display.clear(Rgb565::BLACK).unwrap();
+    LinearLayout::vertical(Chain::new(text))
+        .with_alignment(horizontal::Center)
+        .arrange()
+        .align_to(&display_area, horizontal::Center, vertical::Center)
+        .draw(&mut display_device.display)
+        .unwrap()
+}
 
 fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
     let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
@@ -128,8 +153,8 @@ mod app {
         white_led: Led,
         // usb_serial_device: UsbSerialDevice<'static, Usbd<UsbPeripheral<'static>>>,
         lora: LoraRadio,
-        i2c: I2CSensors,
-        // gpiote: Gpiote,
+        timer: Timer<TIMER3>, // i2c: I2CSensors,
+                              // gpiote: Gpiote,
     }
 
     // 64_000_000 matches hal::clocks::HFCLK_FREQ
@@ -232,7 +257,7 @@ mod app {
         gpiote.port().input_pin(&btn).low();
         gpiote.port().enable_interrupt();
 
-        let lora = {
+        let mut lora = {
             let sck = port0.p0_04.into_push_pull_output(Level::Low).degrade();
             let miso = port0.p0_05.into_floating_input().degrade();
             let mosi = port0.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -247,34 +272,32 @@ mod app {
             };
 
             let spi = Spim::new(
-                cx.device.SPIM2,
+                cx.device.SPIM1,
                 pins,
                 hal::spim::Frequency::M4,
                 hal::spim::MODE_0,
                 122,
             );
 
-            match sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer) {
-                Ok(l) => l,
-                Err(error) => {
-                    show_error(error, &mut display_device);
-                    panic!();
-                }
-            }
+            let mut lora = sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer).unwrap();
+            lora.set_tx_power(17, 1).unwrap();
+            lora
         };
 
-        let i2c = {
-            // NOTE: TWIM0 interfears with spim0, twim1 interfears with spim1
-            // https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Ftwim.html
-            let pins = hal::twim::Pins {
-                scl: port0.p0_25.into_floating_input().degrade(),
-                sda: port0.p0_24.into_floating_input().degrade(),
-            };
-            let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
-            I2CSensors::new(sensor_i2c)
-        };
+        let timer = Timer::new(cx.device.TIMER3);
 
-        show_temp::spawn_after(3.secs()).unwrap();
+        // let i2c = {
+        //     // NOTE: TWIM0 interfears with spim0, twim1 interfears with spim1
+        //     // https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Ftwim.html
+        //     let pins = hal::twim::Pins {
+        //         scl: port0.p0_25.into_floating_input().degrade(),
+        //         sda: port0.p0_24.into_floating_input().degrade(),
+        //     };
+        //     let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
+        //     I2CSensors::new(sensor_i2c)
+        // };
+
+        // show_temp::spawn_after(3.secs()).unwrap();
 
         (
             Shared { display_device },
@@ -282,48 +305,52 @@ mod app {
                 white_led,
                 // usb_serial_device,
                 lora,
-                i2c,
+                timer,
+                // i2c,
                 // gpiote,
             },
             init::Monotonics(monotonic),
         )
     }
 
-    #[task(priority = 2, local = [i2c], shared = [display_device])]
-    fn show_temp(mut cx: show_temp::Context) {
-        let mut message_string: String<255> = String::new();
+    // #[task(priority = 2, local = [i2c], shared = [display_device])]
+    // fn show_temp(mut cx: show_temp::Context) {
+    //     let mut message_string: String<255> = String::new();
 
-        let (temp, _pressure) = cx.local.i2c.read_temp().unwrap();
+    //     let (temp, _pressure) = cx.local.i2c.read_temp().unwrap();
 
-        write!(message_string, "Temp: {}.{:02} C", temp / 100, temp % 100).unwrap();
+    //     // write!(message_string, "Temp: {}.{:02} C", temp / 100, temp % 100).unwrap();
+    //     let f = ((temp / 100) as f32 * (9.0 / 5.0)) as i32 + 32;
+    //     write!(message_string, "Temp: {} F", f).unwrap();
 
-        let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-        let text = Text::new(
-            message_string.as_str(),
-            Point::zero(),
-            MonoTextStyleBuilder::new()
-                .font(&PROFONT_10_POINT)
-                .text_color(Rgb565::GREEN)
-                .background_color(Rgb565::BLACK)
-                .build(),
-        );
+    //     let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
+    //     let text = Text::new(
+    //         message_string.as_str(),
+    //         Point::zero(),
+    //         MonoTextStyleBuilder::new()
+    //             .font(&PROFONT_10_POINT)
+    //             .text_color(Rgb565::GREEN)
+    //             .background_color(Rgb565::BLACK)
+    //             .build(),
+    //     );
 
-        cx.shared.display_device.lock(|display_device| {
-            display_device.display.clear(Rgb565::BLACK).unwrap();
-            LinearLayout::vertical(Chain::new(text))
-                .with_alignment(horizontal::Center)
-                .arrange()
-                .align_to(&display_area, horizontal::Center, vertical::Center)
-                .draw(&mut display_device.display)
-                .unwrap()
-        });
+    //     cx.shared.display_device.lock(|display_device| {
+    //         display_device.display.clear(Rgb565::BLACK).unwrap();
+    //         LinearLayout::vertical(Chain::new(text))
+    //             .with_alignment(horizontal::Center)
+    //             .arrange()
+    //             .align_to(&display_area, horizontal::Center, vertical::Center)
+    //             .draw(&mut display_device.display)
+    //             .unwrap()
+    //     });
 
-        show_temp::spawn_after(5.secs()).unwrap();
-    }
+    //     // show_temp::spawn_after(5.secs()).unwrap();
+    // }
 
-    #[idle(local = [lora], shared = [display_device])]
+    #[idle(local = [lora, timer], shared = [display_device])]
     fn idle(mut cx: idle::Context) -> ! {
         let lora = cx.local.lora;
+        let timer = cx.local.timer;
         let mut message_string: String<255> = String::new();
 
         loop {
@@ -333,32 +360,29 @@ mod app {
 
                 message_string.clear();
                 // Received buffer. NOTE: 255 bytes are always returned
-                // buffer[0..size].iter().for_each(|&value| {
-                //     message_string.push(value as char).unwrap();
-                // });
-                if let Ok(value) = postcard::from_bytes::<shared::Test>(&buffer[..size]) {
-                    write!(message_string, "{:?}", value).unwrap();
+                if let Ok(value) =
+                    postcard::from_bytes::<shared::Transmission<shared::Command>>(&buffer[..size])
+                {
+                    write!(message_string, "{:?}", value.msg).unwrap();
+                    cx.shared
+                        .display_device
+                        .lock(|display_device| show_text(&message_string, display_device));
 
-                    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-                    let text = Text::new(
-                        message_string.as_str(),
-                        Point::zero(),
-                        MonoTextStyleBuilder::new()
-                            .font(&PROFONT_10_POINT)
-                            .text_color(Rgb565::GREEN)
-                            .background_color(Rgb565::BLACK)
-                            .build(),
-                    );
-
-                    cx.shared.display_device.lock(|display_device| {
-                        display_device.display.clear(Rgb565::BLACK).unwrap();
-                        LinearLayout::vertical(Chain::new(text))
-                            .with_alignment(horizontal::Center)
-                            .arrange()
-                            .align_to(&display_area, horizontal::Center, vertical::Center)
-                            .draw(&mut display_device.display)
-                            .unwrap()
-                    })
+                    let mut send_buffer = [0u8; 255];
+                    let send_buffer_size = postcard::to_slice(
+                        &shared::Transmission {
+                            src: shared::DevAddr(1),
+                            msg: shared::TempPressureSensorReport {
+                                temp: ThermodynamicTemperature::new::<degree_celsius>(80.0),
+                            },
+                        },
+                        &mut send_buffer,
+                    )
+                    .unwrap()
+                    .len();
+                    lora.transmit_payload(send_buffer, send_buffer_size)
+                        .unwrap();
+                    timer.delay(5_000_000); // ~5 seconds
                 }
             }
         }

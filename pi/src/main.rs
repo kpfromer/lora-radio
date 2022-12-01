@@ -2,11 +2,14 @@ extern crate linux_embedded_hal as hal;
 extern crate sx127x_lora;
 
 use std::env;
+use std::fmt::Write;
 
 use hal::spidev::{self, SpidevOptions};
 use hal::Delay;
 use hal::Spidev;
 use rppal::gpio::{Gpio, OutputPin};
+
+use uom::si::thermodynamic_temperature::degree_celsius;
 
 #[allow(deprecated)]
 use embedded_hal::digital::v1::OutputPin as HalOutputPin;
@@ -48,12 +51,15 @@ fn main() {
 
     lora.set_tx_power(17, 1).expect("Failed to boost"); //Using PA_BOOST. See your board for correct pin.
 
+    // let size = lora.poll_irq(None).unwrap();
+    // let data = lora.read_packet().unwrap();
+    // println!("DATA: {}", std::str::from_utf8(&data[..size]).unwrap());
+
     // ----------
 
-    let t = shared::Test {
-        name: "Name".into(),
-        id: 0,
-        command: shared::Command::Temp,
+    let t = shared::Transmission {
+        src: shared::DevAddr(0),
+        msg: shared::Command::GetTempPressure,
     };
     let mut buffer = [0; 255];
     let ser = postcard::to_slice(&t, &mut buffer).unwrap();
@@ -68,9 +74,18 @@ fn main() {
     //     buffer[i] = c as u8;
     // }
 
-    let transmit = lora.transmit_payload(buffer, ser_len);
-    transmit.expect("Failed to send payload");
+    lora.transmit_payload(buffer, ser_len)
+        .expect("Failed to send payload");
 
     println!("Done!");
-    // println!("Written \"{}\" message", message);
+
+    let size = lora.poll_irq(None).unwrap();
+    let data = postcard::from_bytes::<shared::Transmission<shared::TempPressureSensorReport>>(
+        &lora.read_packet().expect("Lora data packet")[..size],
+    )
+    .expect("Failed to parse structure");
+
+    let temp = data.msg.temp.get::<degree_celsius>();
+
+    println!("Temperature: {} C", temp);
 }
