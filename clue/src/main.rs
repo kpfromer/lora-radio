@@ -5,6 +5,7 @@ pub mod display;
 pub mod error;
 pub mod i2c;
 pub mod led;
+pub mod lora;
 pub mod panic;
 pub mod soil;
 pub mod usb_serial;
@@ -68,6 +69,7 @@ use profont::PROFONT_24_POINT;
 use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
+use lora::{read_lora, write_lora};
 
 const FREQUENCY: i64 = 915;
 
@@ -77,7 +79,8 @@ const FREQUENCY: i64 = 915;
 // pub const I2C_HUMIDITY: u8 = 0x44;
 pub const I2C_TEMPPRESSURE: u8 = 0x77;
 
-type LoraRadio = LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+pub type LoraRadio =
+    LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
 // type TempPressureSensor = bmp280_rs::BMP280<
 //     shared_bus::I2cProxy<shared_bus::NullMutex<Twim<hal::pac::TWIM1>>>,
 //     bmp280_rs::ModeSleep,
@@ -303,41 +306,6 @@ mod app {
             },
             init::Monotonics(monotonic),
         )
-    }
-
-    fn read_lora<'de, T>(lora: &mut LoraRadio, buffer: &'de mut [u8; 255]) -> Result<T>
-    where
-        T: serde::Deserialize<'de>,
-    {
-        let size = lora
-            .poll_irq(Some(1000))
-            .map_err(|_| AppError::LoraError(LoraError::Timeout))?;
-
-        // Ensures that deseralized data is stored in same lifetime
-        buffer.copy_from_slice(
-            &lora
-                .read_packet()
-                .map_err(|_| AppError::LoraError(LoraError::Read))?,
-        );
-
-        let value = postcard::from_bytes::<shared::Transmission<T>>(&buffer[..size])
-            .map_err(|_| AppError::LoraError(LoraError::Deserialization))?;
-
-        Ok(value.msg)
-    }
-
-    fn write_lora<T>(lora: &mut LoraRadio, data: &T) -> Result<()>
-    where
-        T: serde::Serialize,
-    {
-        let mut buffer = [0u8; 255];
-        let data_size = postcard::to_slice(data, &mut buffer)
-            .map_err(|_| AppError::LoraError(LoraError::Serialization))?
-            .len();
-        lora.transmit_payload(buffer, data_size)
-            .map_err(|_| AppError::LoraError(LoraError::Write))?;
-
-        Ok(())
     }
 
     #[idle(local = [lora, timer, i2c], shared = [display_device])]
