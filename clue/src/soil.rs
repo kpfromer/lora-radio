@@ -24,7 +24,7 @@ impl Soil {
         }
     }
 
-    pub fn soil_moisture_percentage(&mut self) -> Result<u8, AppError> {
+    pub fn soil_moisture_percentage(&mut self) -> Result<u8> {
         // self.adc
         //     .read(&mut self.pin)
         //     .map_err(|_| AppError::SoilReadingError)

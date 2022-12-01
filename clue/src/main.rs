@@ -12,6 +12,7 @@ pub mod usb_serial;
 pub mod prelude {
     pub use crate::error::*;
 }
+use prelude::*;
 
 use core::fmt::Write;
 
@@ -67,10 +68,6 @@ use profont::PROFONT_24_POINT;
 use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
-
-use uom::si::f32::ThermodynamicTemperature;
-use uom::si::thermodynamic_temperature::degree_celsius;
-// use shared_bus;
 
 const FREQUENCY: i64 = 915;
 
@@ -150,11 +147,9 @@ mod app {
     #[local]
     struct Local {
         white_led: Led,
-        // usb_serial_device: UsbSerialDevice<'static, Usbd<UsbPeripheral<'static>>>,
         lora: LoraRadio,
         timer: Timer<TIMER3, Periodic>,
         i2c: I2CSensors,
-        // gpiote: Gpiote,
     }
 
     // 64_000_000 matches hal::clocks::HFCLK_FREQ
@@ -297,55 +292,32 @@ mod app {
             I2CSensors::new(sensor_i2c)
         };
 
-        // show_temp::spawn_after(3.secs()).unwrap();
-
         (
             Shared { display_device },
             Local {
                 white_led,
-                // usb_serial_device,
                 lora,
                 timer,
                 i2c,
-                // gpiote,
             },
             init::Monotonics(monotonic),
         )
     }
 
-    // #[task(priority = 2, local = [i2c], shared = [display_device])]
-    // fn show_temp(mut cx: show_temp::Context) {
-    //     let mut message_string: String<255> = String::new();
+    fn read_lora(lora: &mut LoraRadio) -> Result<shared::Command> {
+        let size = lora
+            .poll_irq(Some(1000))
+            .map_err(|_| AppError::LoraError(LoraError::Timeout))?;
 
-    //     let (temp, _pressure) = cx.local.i2c.read_temp().unwrap();
+        let buffer = lora
+            .read_packet()
+            .map_err(|_| AppError::LoraError(LoraError::Read))?;
 
-    //     // write!(message_string, "Temp: {}.{:02} C", temp / 100, temp % 100).unwrap();
-    //     let f = ((temp / 100) as f32 * (9.0 / 5.0)) as i32 + 32;
-    //     write!(message_string, "Temp: {} F", f).unwrap();
+        let value = postcard::from_bytes::<shared::Transmission<shared::Command>>(&buffer[..size])
+            .map_err(|_| AppError::LoraError(LoraError::Deserialization))?;
 
-    //     let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-    //     let text = Text::new(
-    //         message_string.as_str(),
-    //         Point::zero(),
-    //         MonoTextStyleBuilder::new()
-    //             .font(&PROFONT_10_POINT)
-    //             .text_color(Rgb565::GREEN)
-    //             .background_color(Rgb565::BLACK)
-    //             .build(),
-    //     );
-
-    //     cx.shared.display_device.lock(|display_device| {
-    //         display_device.display.clear(Rgb565::BLACK).unwrap();
-    //         LinearLayout::vertical(Chain::new(text))
-    //             .with_alignment(horizontal::Center)
-    //             .arrange()
-    //             .align_to(&display_area, horizontal::Center, vertical::Center)
-    //             .draw(&mut display_device.display)
-    //             .unwrap()
-    //     });
-
-    //     // show_temp::spawn_after(5.secs()).unwrap();
-    // }
+        Ok(value.msg)
+    }
 
     #[idle(local = [lora, timer, i2c], shared = [display_device])]
     fn idle(mut cx: idle::Context) -> ! {
@@ -356,15 +328,9 @@ mod app {
 
         loop {
             // 1 sec timeout (fails if no message in timeout)
-            if let Ok(size) = lora.poll_irq(Some(1000)) {
-                let buffer = lora.read_packet().unwrap();
-
-                message_string.clear();
-                // Received buffer. NOTE: 255 bytes are always returned
-                if let Ok(value) =
-                    postcard::from_bytes::<shared::Transmission<shared::Command>>(&buffer[..size])
-                {
-                    write!(message_string, "{:?}", value.msg).unwrap();
+            match read_lora(lora) {
+                Ok(shared::Command::GetTempPressure) => {
+                    write!(message_string, "temp").unwrap();
                     cx.shared
                         .display_device
                         .lock(|display_device| show_text(&message_string, display_device));
@@ -388,20 +354,12 @@ mod app {
 
                     timer.delay_ms(50u32); // ensure gap between transmissions
                 }
+                // Continue on timeout
+                Err(AppError::LoraError(LoraError::Timeout)) => {}
+                _ => panic!(),
             }
         }
     }
 
-    // #[task(binds = GPIOTE, local = [gpiote], priority = 5)]
-    // fn on_gpiote(cx: on_gpiote::Context) {
-    //     cx.local.gpiote.reset_events();
-    //     toggle_display::spawn().unwrap();
-    // }
-
-    // #[task(shared=[display_device], priority = 4)]
-    // fn toggle_display(mut cx: toggle_display::Context) {
-    //     cx.shared
-    //         .display_device
-    //         .lock(|display_device| display_device.toggle());
-    // }
+    // TODO: gpiote toggle display
 }
