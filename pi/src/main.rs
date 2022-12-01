@@ -1,16 +1,16 @@
 extern crate linux_embedded_hal as hal;
 extern crate sx127x_lora;
 
-use std::env;
-use std::fmt::Write;
-
 use hal::spidev::{self, SpidevOptions};
 use hal::Delay;
 use hal::Spidev;
 use rppal::gpio::{Gpio, OutputPin};
 
+use sx127x_lora::LoRa;
 use uom::si::pressure::atmosphere;
-use uom::si::thermodynamic_temperature::{degree_celsius, degree_fahrenheit};
+use uom::si::thermodynamic_temperature::degree_fahrenheit;
+
+use anyhow::{anyhow, Context, Result};
 
 #[allow(deprecated)]
 use embedded_hal::digital::v1::OutputPin as HalOutputPin;
@@ -33,62 +33,71 @@ impl HalOutputPin for MyOutputPin {
     }
 }
 
-fn main() {
-    let mut spi = Spidev::open("/dev/spidev0.1").unwrap();
+type LoraRadio = LoRa<Spidev, MyOutputPin, MyOutputPin, Delay>;
+
+fn create_lora() -> Result<LoraRadio> {
+    let mut spi = Spidev::open("/dev/spidev0.1").context("Failed to open spi")?;
     let options = SpidevOptions::new()
         .bits_per_word(8)
         .max_speed_hz(20_000)
         .mode(spidev::SpiModeFlags::SPI_MODE_0)
         .build();
-    spi.configure(&options).unwrap();
+    spi.configure(&options).context("Failed to configure spi")?;
 
-    let gpio = Gpio::new().unwrap();
+    let gpio = Gpio::new()?;
 
-    let cs = MyOutputPin(gpio.get(LORA_CS_PIN).unwrap().into_output());
-    let reset = MyOutputPin(gpio.get(LORA_RESET_PIN).unwrap().into_output());
+    let cs = MyOutputPin(gpio.get(LORA_CS_PIN)?.into_output());
+    let reset = MyOutputPin(gpio.get(LORA_RESET_PIN)?.into_output());
 
     let mut lora = sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, Delay)
-        .expect("Failed to communicate with radio module!");
+        .map_err(|_| anyhow!("Failed to communicate with radio module!"))?;
 
-    lora.set_tx_power(17, 1).expect("Failed to boost"); //Using PA_BOOST. See your board for correct pin.
+    lora.set_tx_power(17, 1)
+        .map_err(|_| anyhow!("Failed to boost"))?; //Using PA_BOOST. See your board for correct pin.
 
-    // let size = lora.poll_irq(None).unwrap();
-    // let data = lora.read_packet().unwrap();
-    // println!("DATA: {}", std::str::from_utf8(&data[..size]).unwrap());
+    Ok(lora)
+}
 
-    // ----------
-
+fn write_lora(lora: &mut LoraRadio, message: shared::Command) -> Result<()> {
     let t = shared::Transmission {
         src: shared::DevAddr(0),
-        msg: shared::Command::GetTempPressure,
+        msg: message,
     };
     let mut buffer = [0; 255];
-    let ser = postcard::to_slice(&t, &mut buffer).unwrap();
+    let ser = postcard::to_slice(&t, &mut buffer)?;
     let ser_len = ser.len();
-    println!("Transmitting command: {:?}", t);
-
-    // let message = "Hello, world!";
-    // let args: Vec<String> = env::args().collect();
-    // let message = args[1].clone();
-    // let mut buffer = [0; 255];
-    // for (i, c) in message.chars().enumerate() {
-    //     buffer[i] = c as u8;
-    // }
 
     lora.transmit_payload(buffer, ser_len)
-        .expect("Failed to send payload");
+        .map_err(|_| anyhow!("Failed to send payload"))?;
 
-    println!("Done!");
+    Ok(())
+}
 
-    let size = lora.poll_irq(None).unwrap();
+fn read_lora(lora: &mut LoraRadio) -> Result<shared::TempPressureSensorReport> {
+    let size = lora
+        .poll_irq(None)
+        .map_err(|_| anyhow!("Failed to poll lora"))?;
+    let buffer = lora
+        .read_packet()
+        .map_err(|_| anyhow!("Lora data packet"))?;
     let data = postcard::from_bytes::<shared::Transmission<shared::TempPressureSensorReport>>(
-        &lora.read_packet().expect("Lora data packet")[..size],
-    )
-    .expect("Failed to parse structure");
+        &buffer[..size],
+    )?;
 
-    let temp = data.msg.temperature.get::<degree_fahrenheit>();
-    let pressure = data.msg.pressure.get::<atmosphere>();
+    Ok(data.msg)
+}
+
+fn main() -> Result<()> {
+    let mut lora = create_lora()?;
+
+    write_lora(&mut lora, shared::Command::GetTempPressure)?;
+    let message = read_lora(&mut lora)?;
+
+    let temp = message.temperature.get::<degree_fahrenheit>();
+    let pressure = message.pressure.get::<atmosphere>();
 
     println!("Temperature: {} F", temp);
     println!("Pressure: {} atmosphere", pressure);
+
+    Ok(())
 }
