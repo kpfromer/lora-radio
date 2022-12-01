@@ -305,16 +305,22 @@ mod app {
         )
     }
 
-    fn read_lora(lora: &mut LoraRadio) -> Result<shared::Command> {
+    fn read_lora<'de, T>(lora: &mut LoraRadio, buffer: &'de mut [u8; 255]) -> Result<T>
+    where
+        T: serde::Deserialize<'de>,
+    {
         let size = lora
             .poll_irq(Some(1000))
             .map_err(|_| AppError::LoraError(LoraError::Timeout))?;
 
-        let buffer = lora
-            .read_packet()
-            .map_err(|_| AppError::LoraError(LoraError::Read))?;
+        // Ensures that deseralized data is stored in same lifetime
+        buffer.copy_from_slice(
+            &lora
+                .read_packet()
+                .map_err(|_| AppError::LoraError(LoraError::Read))?,
+        );
 
-        let value = postcard::from_bytes::<shared::Transmission<shared::Command>>(&buffer[..size])
+        let value = postcard::from_bytes::<shared::Transmission<T>>(&buffer[..size])
             .map_err(|_| AppError::LoraError(LoraError::Deserialization))?;
 
         Ok(value.msg)
@@ -342,7 +348,8 @@ mod app {
 
         loop {
             // 1 sec timeout (fails if no message in timeout)
-            match read_lora(lora) {
+            let mut data_buffer = [0u8; 255];
+            match read_lora(lora, &mut data_buffer) {
                 Ok(shared::Command::GetTempPressure) => {
                     cx.shared
                         .display_device
