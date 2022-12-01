@@ -137,6 +137,7 @@ fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal
 
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM0, PWM1, PWM3])]
 mod app {
+
     use super::*;
 
     #[shared]
@@ -319,25 +320,37 @@ mod app {
         Ok(value.msg)
     }
 
+    fn write_lora<T>(lora: &mut LoraRadio, data: &T) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let mut buffer = [0u8; 255];
+        let data_size = postcard::to_slice(data, &mut buffer)
+            .map_err(|_| AppError::LoraError(LoraError::Serialization))?
+            .len();
+        lora.transmit_payload(buffer, data_size)
+            .map_err(|_| AppError::LoraError(LoraError::Write))?;
+
+        Ok(())
+    }
+
     #[idle(local = [lora, timer, i2c], shared = [display_device])]
     fn idle(mut cx: idle::Context) -> ! {
         let lora = cx.local.lora;
         let timer = cx.local.timer;
         let i2c = cx.local.i2c;
-        let mut message_string: String<255> = String::new();
 
         loop {
             // 1 sec timeout (fails if no message in timeout)
             match read_lora(lora) {
                 Ok(shared::Command::GetTempPressure) => {
-                    write!(message_string, "temp").unwrap();
                     cx.shared
                         .display_device
-                        .lock(|display_device| show_text(&message_string, display_device));
+                        .lock(|display_device| show_text("Getting temperature", display_device));
 
-                    let mut send_buffer = [0u8; 255];
                     let (temperature, pressure) = i2c.read_temp().unwrap();
-                    let send_buffer_size = postcard::to_slice(
+                    write_lora(
+                        lora,
                         &shared::Transmission {
                             src: shared::DevAddr(1),
                             msg: shared::TempPressureSensorReport {
@@ -345,12 +358,8 @@ mod app {
                                 pressure,
                             },
                         },
-                        &mut send_buffer,
                     )
-                    .unwrap()
-                    .len();
-                    lora.transmit_payload(send_buffer, send_buffer_size)
-                        .unwrap();
+                    .unwrap();
 
                     timer.delay_ms(50u32); // ensure gap between transmissions
                 }
