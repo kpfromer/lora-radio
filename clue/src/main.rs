@@ -15,7 +15,9 @@ pub mod prelude {
 
 use core::fmt::Write;
 
-use hal::pac::SPIM1;
+use hal::timer::Periodic;
+use nrf52840_hal::prelude::*;
+
 use i2c::*;
 
 use hal::Spim;
@@ -78,7 +80,7 @@ const FREQUENCY: i64 = 915;
 // pub const I2C_HUMIDITY: u8 = 0x44;
 pub const I2C_TEMPPRESSURE: u8 = 0x77;
 
-type LoraRadio = LoRa<Spim<SPIM1>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
+type LoraRadio = LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
 // type TempPressureSensor = bmp280_rs::BMP280<
 //     shared_bus::I2cProxy<shared_bus::NullMutex<Twim<hal::pac::TWIM1>>>,
 //     bmp280_rs::ModeSleep,
@@ -136,11 +138,8 @@ fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal
         .unwrap();
 }
 
-#[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM3, SPIM3, SPIM2_SPIS2_SPI2])]
+#[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM0, PWM1, PWM3])]
 mod app {
-
-    use profont::PROFONT_10_POINT;
-
     use super::*;
 
     #[shared]
@@ -153,8 +152,9 @@ mod app {
         white_led: Led,
         // usb_serial_device: UsbSerialDevice<'static, Usbd<UsbPeripheral<'static>>>,
         lora: LoraRadio,
-        timer: Timer<TIMER3>, // i2c: I2CSensors,
-                              // gpiote: Gpiote,
+        timer: Timer<TIMER3, Periodic>,
+        i2c: I2CSensors,
+        // gpiote: Gpiote,
     }
 
     // 64_000_000 matches hal::clocks::HFCLK_FREQ
@@ -257,7 +257,7 @@ mod app {
         gpiote.port().input_pin(&btn).low();
         gpiote.port().enable_interrupt();
 
-        let mut lora = {
+        let lora = {
             let sck = port0.p0_04.into_push_pull_output(Level::Low).degrade();
             let miso = port0.p0_05.into_floating_input().degrade();
             let mosi = port0.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -272,7 +272,7 @@ mod app {
             };
 
             let spi = Spim::new(
-                cx.device.SPIM1,
+                cx.device.SPIM2,
                 pins,
                 hal::spim::Frequency::M4,
                 hal::spim::MODE_0,
@@ -280,22 +280,22 @@ mod app {
             );
 
             let mut lora = sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, timer).unwrap();
-            lora.set_tx_power(17, 1).unwrap();
+            lora.set_tx_power(15, 1).unwrap();
             lora
         };
 
-        let timer = Timer::new(cx.device.TIMER3);
+        let timer = Timer::new(cx.device.TIMER3).into_periodic();
 
-        // let i2c = {
-        //     // NOTE: TWIM0 interfears with spim0, twim1 interfears with spim1
-        //     // https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Ftwim.html
-        //     let pins = hal::twim::Pins {
-        //         scl: port0.p0_25.into_floating_input().degrade(),
-        //         sda: port0.p0_24.into_floating_input().degrade(),
-        //     };
-        //     let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
-        //     I2CSensors::new(sensor_i2c)
-        // };
+        let i2c = {
+            // NOTE: TWIM0 interfears with spim0, twim1 interfears with spim1
+            // https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Ftwim.html
+            let pins = hal::twim::Pins {
+                scl: port0.p0_25.into_floating_input().degrade(),
+                sda: port0.p0_24.into_floating_input().degrade(),
+            };
+            let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
+            I2CSensors::new(sensor_i2c)
+        };
 
         // show_temp::spawn_after(3.secs()).unwrap();
 
@@ -306,7 +306,7 @@ mod app {
                 // usb_serial_device,
                 lora,
                 timer,
-                // i2c,
+                i2c,
                 // gpiote,
             },
             init::Monotonics(monotonic),
@@ -347,10 +347,11 @@ mod app {
     //     // show_temp::spawn_after(5.secs()).unwrap();
     // }
 
-    #[idle(local = [lora, timer], shared = [display_device])]
+    #[idle(local = [lora, timer, i2c], shared = [display_device])]
     fn idle(mut cx: idle::Context) -> ! {
         let lora = cx.local.lora;
         let timer = cx.local.timer;
+        let i2c = cx.local.i2c;
         let mut message_string: String<255> = String::new();
 
         loop {
@@ -369,11 +370,13 @@ mod app {
                         .lock(|display_device| show_text(&message_string, display_device));
 
                     let mut send_buffer = [0u8; 255];
+                    let (temperature, pressure) = i2c.read_temp().unwrap();
                     let send_buffer_size = postcard::to_slice(
                         &shared::Transmission {
                             src: shared::DevAddr(1),
                             msg: shared::TempPressureSensorReport {
-                                temp: ThermodynamicTemperature::new::<degree_celsius>(80.0),
+                                temperature,
+                                pressure,
                             },
                         },
                         &mut send_buffer,
@@ -382,7 +385,8 @@ mod app {
                     .len();
                     lora.transmit_payload(send_buffer, send_buffer_size)
                         .unwrap();
-                    timer.delay(5_000_000); // ~5 seconds
+
+                    timer.delay_ms(50u32); // ensure gap between transmissions
                 }
             }
         }

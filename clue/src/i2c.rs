@@ -1,5 +1,10 @@
 use bmp280_rs::Error as TempPressureError;
 use nrf52840_hal as hal;
+use uom::si::{
+    f32::{Pressure, ThermodynamicTemperature},
+    pressure::pascal,
+    thermodynamic_temperature::degree_celsius,
+};
 
 pub type I2C = hal::Twim<hal::pac::TWIM1>;
 pub type TempPressureSensor = bmp280_rs::BMP280<I2C, bmp280_rs::ModeSleep>;
@@ -34,11 +39,17 @@ impl I2CSensors {
             temp_pressure_sensor,
         }
     }
-    pub fn read_temp(&mut self) -> Result<(i32, i32), TempPressureError> {
+    pub fn read_temp(&mut self) -> Result<(ThermodynamicTemperature, Pressure), TempPressureError> {
         self.temp_pressure_sensor
             .trigger_measurement(&mut self.i2c)?;
         let temp = self.temp_pressure_sensor.read_temperature(&mut self.i2c)?;
         let pressure = self.temp_pressure_sensor.read_pressure(&mut self.i2c)?;
-        Ok((temp, pressure))
+
+        // For conversions see datasheet (https://cdn-shop.adafruit.com/datasheets/BST-BMP280-DS001-11.pdf)
+        // page 22
+        Ok((
+            ThermodynamicTemperature::new::<degree_celsius>(temp as f32 / 100.0),
+            Pressure::new::<pascal>(pressure as f32 / 256.0),
+        ))
     }
 }

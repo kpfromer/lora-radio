@@ -9,7 +9,8 @@ use hal::Delay;
 use hal::Spidev;
 use rppal::gpio::{Gpio, OutputPin};
 
-use uom::si::thermodynamic_temperature::degree_celsius;
+use uom::si::pressure::atmosphere;
+use uom::si::thermodynamic_temperature::{degree_celsius, degree_fahrenheit};
 
 #[allow(deprecated)]
 use embedded_hal::digital::v1::OutputPin as HalOutputPin;
@@ -85,7 +86,9 @@ fn main() {
     )
     .expect("Failed to parse structure");
 
-    let temp = data.msg.temp.get::<degree_celsius>();
+    let temp = data.msg.temperature.get::<degree_fahrenheit>();
+    let pressure = data.msg.pressure.get::<atmosphere>();
 
-    println!("Temperature: {} C", temp);
+    println!("Temperature: {} F", temp);
+    println!("Pressure: {} atmosphere", pressure);
 }

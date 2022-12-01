@@ -1,10 +1,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use uom::si::f32::ThermodynamicTemperature;
+use uom::si::f32::{Pressure, ThermodynamicTemperature};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct TempPressureSensorReport {
-    pub temp: ThermodynamicTemperature,
+    pub temperature: ThermodynamicTemperature,
+    pub pressure: Pressure,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
