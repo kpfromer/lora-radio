@@ -8,6 +8,7 @@ use rppal::gpio::{Gpio, OutputPin};
 
 use sx127x_lora::LoRa;
 use uom::si::pressure::atmosphere;
+use uom::si::ratio::percent;
 use uom::si::thermodynamic_temperature::degree_fahrenheit;
 
 use anyhow::{anyhow, Context, Result};
@@ -97,7 +98,7 @@ fn main() -> Result<()> {
 
         let temp = message.temperature.get::<degree_fahrenheit>();
         let pressure = message.pressure.get::<atmosphere>();
-        let humidity = message.humidity;
+        let humidity = message.humidity.get::<percent>();
 
         println!(
             "Temperature: {} F - Pressure: {} atmosphere - humidity {}",

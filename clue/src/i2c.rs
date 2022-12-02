@@ -5,8 +5,9 @@ use nrf52840_hal as hal;
 use shared_bus_rtic::SharedBus;
 use sht3x::SHT3x;
 use uom::si::{
-    f32::{Pressure, ThermodynamicTemperature},
+    f32::{Pressure, Ratio, ThermodynamicTemperature},
     pressure::pascal,
+    ratio::percent,
     thermodynamic_temperature::degree_celsius,
 };
 
@@ -84,7 +85,7 @@ impl<D: DelayMs<u8>> I2CSensors<D> {
         ))
     }
 
-    pub fn read_humidity(&mut self) -> AppResult<i32> {
+    pub fn read_humidity(&mut self) -> AppResult<Ratio> {
         let sht3x::Measurement {
             humidity,
             temperature: _,
@@ -93,6 +94,6 @@ impl<D: DelayMs<u8>> I2CSensors<D> {
             .measure(sht3x::Repeatability::High, &mut self.delay)
             .map_err(|_| AppError::SHT3XError)?;
 
-        Ok(humidity)
+        Ok(Ratio::new::<percent>(humidity as f32 / 100.0))
     }
 }
