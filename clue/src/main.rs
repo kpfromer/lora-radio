@@ -28,7 +28,7 @@ use hal::gpio::p0::P0_28;
 use hal::gpio::Output;
 use hal::gpio::PushPull;
 use hal::pac::SPIM2;
-use hal::pac::{TIMER3, TIMER4};
+use hal::pac::{TIMER2, TIMER3, TIMER4};
 use hal::twim::Twim;
 
 use nrf52840_hal as _;
@@ -64,13 +64,14 @@ use profont::PROFONT_24_POINT;
 use display::DisplayDevice;
 use led::Led;
 use lora::{read_lora, write_lora};
+use shared::Command;
 
 const FREQUENCY: i64 = 915;
 
 // pub const I2C_GYROACCEL: u8 = 0x6A;
 // pub const I2C_MAGNETOMETER: u8 = 0x1c;
 // pub const I2C_GESTURE: u8 = 0x39;
-// pub const I2C_HUMIDITY: u8 = 0x44;
+pub const I2C_HUMIDITY: u8 = 0x44;
 pub const I2C_TEMPPRESSURE: u8 = 0x77;
 
 pub type LoraRadio =
@@ -78,9 +79,6 @@ pub type LoraRadio =
 
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM0, PWM1, PWM3])]
 mod app {
-
-    use shared::Command;
-
     use super::*;
 
     #[shared]
@@ -93,7 +91,7 @@ mod app {
         white_led: Led,
         lora: LoraRadio,
         timer: Timer<TIMER3, Periodic>,
-        i2c: I2CSensors,
+        i2c: I2CSensors<Timer<TIMER2, Periodic>>,
     }
 
     // 64_000_000 matches hal::clocks::HFCLK_FREQ
@@ -235,8 +233,9 @@ mod app {
                 scl: port0.p0_25.into_floating_input().degrade(),
                 sda: port0.p0_24.into_floating_input().degrade(),
             };
-            let sensor_i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
-            I2CSensors::new(sensor_i2c)
+            let i2c = Twim::new(cx.device.TWIM1, pins, hal::twim::Frequency::K400);
+
+            I2CSensors::new(i2c, Timer::new(cx.device.TIMER2).into_periodic())
         };
 
         handle_broadcast::spawn().unwrap();
@@ -278,6 +277,8 @@ mod app {
         let handle_broadcast::LocalResources { lora, timer, i2c } = cx.local;
 
         let (temperature, pressure) = i2c.read_temp().unwrap();
+        let humidity = i2c.read_humidity().unwrap();
+
         write_lora(
             lora,
             &shared::Transmission {
@@ -285,6 +286,7 @@ mod app {
                 msg: shared::TempPressureSensorReport {
                     temperature,
                     pressure,
+                    humidity,
                 },
             },
         )

@@ -6,6 +6,8 @@ use uom::si::f32::{Pressure, ThermodynamicTemperature};
 pub struct TempPressureSensorReport {
     pub temperature: ThermodynamicTemperature,
     pub pressure: Pressure,
+    // TODO: extract to other report
+    pub humidity: i32,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]

@@ -97,9 +97,11 @@ fn main() -> Result<()> {
 
         let temp = message.temperature.get::<degree_fahrenheit>();
         let pressure = message.pressure.get::<atmosphere>();
+        let humidity = message.humidity;
+
         println!(
-            "Temperature: {} F - Pressure: {} atmosphere",
-            temp, pressure
+            "Temperature: {} F - Pressure: {} atmosphere - humidity {}",
+            temp, pressure, humidity
         );
 
         write_lora(&mut lora, shared::Command::Led(false))?;

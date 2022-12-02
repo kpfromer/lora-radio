@@ -23,6 +23,8 @@ pub enum AppError {
     UsbSerialError,
     DisplayError(&'static str),
 
+    SHT3XError,
+
     LoraError(LoraError),
 }
 
