@@ -15,8 +15,6 @@ pub mod prelude {
 }
 use prelude::*;
 
-use core::fmt::Write;
-
 use hal::timer::Periodic;
 use nrf52840_hal::prelude::*;
 
@@ -33,11 +31,8 @@ use hal::pac::SPIM2;
 use hal::pac::{TIMER3, TIMER4};
 use hal::twim::Twim;
 
-use heapless::String;
-
 use nrf52840_hal as _;
 
-use profont::PROFONT_10_POINT;
 use rtic::app;
 
 use dwt_systick_monotonic::DwtSystick;
@@ -66,7 +61,6 @@ use usb_device::bus::UsbBusAllocator;
 
 use profont::PROFONT_24_POINT;
 
-use core::fmt::Debug;
 use display::DisplayDevice;
 use led::Led;
 use lora::{read_lora, write_lora};
@@ -81,65 +75,11 @@ pub const I2C_TEMPPRESSURE: u8 = 0x77;
 
 pub type LoraRadio =
     LoRa<Spim<SPIM2>, P0_28<Output<PushPull>>, P0_02<Output<PushPull>>, Timer<TIMER4>>;
-// type TempPressureSensor = bmp280_rs::BMP280<
-//     shared_bus::I2cProxy<shared_bus::NullMutex<Twim<hal::pac::TWIM1>>>,
-//     bmp280_rs::ModeSleep,
-// >;
-
-fn show_text(text: &str, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
-    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-    let text = Text::new(
-        text,
-        Point::zero(),
-        MonoTextStyleBuilder::new()
-            .font(&PROFONT_10_POINT)
-            .text_color(Rgb565::GREEN)
-            .background_color(Rgb565::BLACK)
-            .build(),
-    );
-
-    display_device.display.clear(Rgb565::BLACK).unwrap();
-    LinearLayout::vertical(Chain::new(text))
-        .with_alignment(horizontal::Center)
-        .arrange()
-        .align_to(&display_area, horizontal::Center, vertical::Center)
-        .draw(&mut display_device.display)
-        .unwrap()
-}
-
-fn show_error(error: impl Debug, display_device: &mut DisplayDevice<nrf52840_hal::pac::TIMER1>) {
-    let display_area = Rectangle::new(Point::new(80, 0), Size::new(240, 240));
-
-    let error_type = Text::new(
-        "Error",
-        Point::zero(),
-        MonoTextStyleBuilder::new()
-            .font(&PROFONT_10_POINT)
-            .text_color(Rgb565::RED)
-            .background_color(Rgb565::BLACK)
-            .build(),
-    );
-    let mut error_message_string: String<64> = String::new();
-    write!(error_message_string, "{:?}", error).unwrap();
-    let error_message = Text::new(
-        error_message_string.as_str(),
-        Point::zero(),
-        MonoTextStyleBuilder::new()
-            .font(&PROFONT_10_POINT)
-            .text_color(Rgb565::RED)
-            .background_color(Rgb565::BLACK)
-            .build(),
-    );
-    LinearLayout::vertical(Chain::new(error_type).append(error_message))
-        .with_alignment(horizontal::Center)
-        .arrange()
-        .align_to(&display_area, horizontal::Center, vertical::Center)
-        .draw(&mut display_device.display)
-        .unwrap();
-}
 
 #[app(device = nrf52840_hal::pac, peripherals = true, dispatchers = [PWM0, PWM1, PWM3])]
 mod app {
+
+    use shared::Command;
 
     use super::*;
 
@@ -192,38 +132,41 @@ mod app {
 
         let white_led = Led::new(port0.p0_10.degrade());
 
-        let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
-        let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
-        let _tft_cs = port0.p0_12.into_push_pull_output(Level::Low);
-        let tft_dc = port0.p0_13.into_push_pull_output(Level::Low);
-        let tft_sck = port0.p0_14.into_push_pull_output(Level::Low).degrade();
-        let tft_mosi = port0.p0_15.into_push_pull_output(Level::Low).degrade();
-        let pins = hal::spim::Pins {
-            sck: Some(tft_sck),
-            miso: None,
-            mosi: Some(tft_mosi),
+        let mut display = {
+            let tft_reset = port1.p1_03.into_push_pull_output(Level::Low);
+            let tft_backlight = port1.p1_05.into_push_pull_output(Level::Low);
+            let _tft_cs = port0.p0_12.into_push_pull_output(Level::Low);
+            let tft_dc = port0.p0_13.into_push_pull_output(Level::Low);
+            let tft_sck = port0.p0_14.into_push_pull_output(Level::Low).degrade();
+            let tft_mosi = port0.p0_15.into_push_pull_output(Level::Low).degrade();
+            let pins = hal::spim::Pins {
+                sck: Some(tft_sck),
+                miso: None,
+                mosi: Some(tft_mosi),
+            };
+            // https://github.com/almindor/st7789-examples/blob/master/examples/image.rs
+            let spi = Spim::new(
+                cx.device.SPIM0,
+                pins,
+                hal::spim::Frequency::M8,
+                hal::spim::MODE_3,
+                122,
+            );
+            // Display interface from SPI and DC
+            let display_interface = SPIInterfaceNoCS::new(spi, tft_dc);
+            // Create driver
+            ST7789::new(
+                display_interface,
+                Some(tft_reset),
+                Some(tft_backlight),
+                240,
+                240,
+            )
         };
-        // https://github.com/almindor/st7789-examples/blob/master/examples/image.rs
-        let spi = Spim::new(
-            cx.device.SPIM0,
-            pins,
-            hal::spim::Frequency::M8,
-            hal::spim::MODE_3,
-            122,
-        );
-        // Display interface from SPI and DC
-        let display_interface = SPIInterfaceNoCS::new(spi, tft_dc);
-        // Create driver
-        let mut display = ST7789::new(
-            display_interface,
-            Some(tft_reset),
-            Some(tft_backlight),
-            240,
-            240,
-        );
-        // TODO: move
+
         // initialize
         let mut timer = Timer::new(cx.device.TIMER4);
+
         display.init(&mut timer).unwrap();
         // set default orientation
         display
@@ -310,14 +253,29 @@ mod app {
         )
     }
 
-    #[task(local = [lora, timer, i2c, white_led], shared = [display_device])]
-    fn handle_broadcast(mut cx: handle_broadcast::Context) {
-        let handle_broadcast::LocalResources {
-            white_led,
-            lora,
-            timer,
-            i2c,
-        } = cx.local;
+    #[task(local = [white_led], shared = [display_device])]
+    fn handle_command(mut cx: handle_command::Context, command: Command) {
+        let white_led = cx.local.white_led;
+
+        match command {
+            Command::Led(status) => {
+                if status {
+                    white_led.on();
+                } else {
+                    white_led.off();
+                }
+            }
+            Command::Display(status) => {
+                cx.shared
+                    .display_device
+                    .lock(|display| if status { display.on() } else { display.off() });
+            }
+        }
+    }
+
+    #[task(local = [lora, timer, i2c])]
+    fn handle_broadcast(cx: handle_broadcast::Context) {
+        let handle_broadcast::LocalResources { lora, timer, i2c } = cx.local;
 
         let (temperature, pressure) = i2c.read_temp().unwrap();
         write_lora(
@@ -335,16 +293,7 @@ mod app {
 
         let mut data_buffer = [0u8; 255];
         match read_lora::<shared::Command>(lora, &mut data_buffer) {
-            Ok(shared::Command::Led(status)) => {
-                if status {
-                    white_led.on()
-                } else {
-                    white_led.off()
-                }
-                // cx.shared
-                //     .display_device
-                //     .lock(|display_device| show_text("Getting temperature", display_device));
-            }
+            Ok(command) => handle_command::spawn(command).unwrap(),
             // Continue on timeout or any other lora error
             Err(AppError::LoraError(_)) => {}
             _ => panic!(),

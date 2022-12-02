@@ -10,6 +10,7 @@ pub struct TempPressureSensorReport {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum Command {
+    Display(bool),
     Led(bool),
 }
 
