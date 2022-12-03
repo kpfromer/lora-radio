@@ -61,12 +61,6 @@ impl<D: DelayMs<u8>> I2CSensors<D> {
         }
     }
 
-    //     let h = humidity
-    //     .measure(sht3x::Repeatability::High, &mut delay)
-    //     .unwrap();
-    // let mut humstring: String<64> = String::new();
-    // write!(humstring, "HUMID {} TEMP {}", h.humidity, h.temperature).unwrap();
-
     pub fn read_temp(&mut self) -> Result<(ThermodynamicTemperature, Pressure), TempPressureError> {
         self.temp_pressure_sensor
             .trigger_measurement(&mut self.temp_i2c)?;

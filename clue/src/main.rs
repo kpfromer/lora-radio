@@ -84,6 +84,7 @@ mod app {
     #[shared]
     struct Shared {
         display_device: DisplayDevice<nrf52840_hal::pac::TIMER1>,
+        i2c: I2CSensors<Timer<TIMER2, Periodic>>,
     }
 
     #[local]
@@ -91,7 +92,6 @@ mod app {
         white_led: Led,
         lora: LoraRadio,
         timer: Timer<TIMER3, Periodic>,
-        i2c: I2CSensors<Timer<TIMER2, Periodic>>,
     }
 
     // 64_000_000 matches hal::clocks::HFCLK_FREQ
@@ -238,21 +238,56 @@ mod app {
             I2CSensors::new(i2c, Timer::new(cx.device.TIMER2).into_periodic())
         };
 
-        handle_broadcast::spawn().unwrap();
+        handle_temp_pressure::spawn().unwrap();
+        handle_humidity::spawn().unwrap();
 
         (
-            Shared { display_device },
+            Shared {
+                display_device,
+                i2c,
+            },
             Local {
                 white_led,
                 lora,
                 timer,
-                i2c,
             },
             init::Monotonics(monotonic),
         )
     }
 
-    #[task(local = [white_led], shared = [display_device])]
+    #[task(shared = [i2c])]
+    fn handle_temp_pressure(mut cx: handle_temp_pressure::Context) {
+        cx.shared.i2c.lock(|i2c| {
+            let (temperature, pressure) = i2c.read_temp().unwrap();
+            // Ignore error if capacity is full
+            handle_broadcast::spawn(shared::Message::TempPressureSensorReport(
+                shared::TempPressureSensorReport {
+                    temperature,
+                    pressure,
+                },
+            ))
+            .ok();
+        });
+
+        handle_temp_pressure::spawn_after(5.secs()).unwrap();
+    }
+
+    #[task(shared = [i2c])]
+    fn handle_humidity(mut cx: handle_humidity::Context) {
+        cx.shared.i2c.lock(|i2c| {
+            let humidity = i2c.read_humidity().unwrap();
+
+            // Ignore error if capacity is full
+            handle_broadcast::spawn(shared::Message::HumidityReport(shared::HumidityReport {
+                humidity,
+            }))
+            .ok();
+        });
+
+        handle_humidity::spawn_after(5.secs()).unwrap();
+    }
+
+    #[task(local = [white_led], shared = [display_device], capacity = 5)]
     fn handle_command(mut cx: handle_command::Context, command: Command) {
         let white_led = cx.local.white_led;
 
@@ -272,22 +307,15 @@ mod app {
         }
     }
 
-    #[task(local = [lora, timer, i2c])]
-    fn handle_broadcast(cx: handle_broadcast::Context) {
-        let handle_broadcast::LocalResources { lora, timer, i2c } = cx.local;
-
-        let (temperature, pressure) = i2c.read_temp().unwrap();
-        let humidity = i2c.read_humidity().unwrap();
+    #[task(local = [lora, timer], capacity = 3)]
+    fn handle_broadcast(cx: handle_broadcast::Context, message: shared::Message) {
+        let handle_broadcast::LocalResources { lora, timer } = cx.local;
 
         write_lora(
             lora,
             &shared::Transmission {
-                src: shared::DevAddr(1),
-                msg: shared::TempPressureSensorReport {
-                    temperature,
-                    pressure,
-                    humidity,
-                },
+                src: shared::DevAddr(0),
+                msg: message,
             },
         )
         .unwrap();
@@ -300,8 +328,6 @@ mod app {
             Err(AppError::LoraError(_)) => {}
             _ => panic!(),
         }
-
-        handle_broadcast::spawn_after(5.secs()).unwrap();
     }
 
     // TODO: gpiote toggle display

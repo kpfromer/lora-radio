@@ -6,6 +6,7 @@ use hal::Delay;
 use hal::Spidev;
 use rppal::gpio::{Gpio, OutputPin};
 
+use shared::{HumidityReport, Message, TempPressureSensorReport};
 use sx127x_lora::LoRa;
 use uom::si::pressure::atmosphere;
 use uom::si::ratio::percent;
@@ -74,16 +75,14 @@ fn write_lora(lora: &mut LoraRadio, message: shared::Command) -> Result<()> {
     Ok(())
 }
 
-fn read_lora(lora: &mut LoraRadio) -> Result<shared::TempPressureSensorReport> {
+fn read_lora(lora: &mut LoraRadio) -> Result<shared::Message> {
     let size = lora
         .poll_irq(None)
         .map_err(|_| anyhow!("Failed to poll lora"))?;
     let buffer = lora
         .read_packet()
         .map_err(|_| anyhow!("Lora data packet"))?;
-    let data = postcard::from_bytes::<shared::Transmission<shared::TempPressureSensorReport>>(
-        &buffer[..size],
-    )?;
+    let data = postcard::from_bytes::<shared::Transmission<shared::Message>>(&buffer[..size])?;
 
     Ok(data.msg)
 }
@@ -96,14 +95,21 @@ fn main() -> Result<()> {
     loop {
         let message = read_lora(&mut lora)?;
 
-        let temp = message.temperature.get::<degree_fahrenheit>();
-        let pressure = message.pressure.get::<atmosphere>();
-        let humidity = message.humidity.get::<percent>();
-
-        println!(
-            "Temperature: {} F - Pressure: {} atmosphere - humidity {}",
-            temp, pressure, humidity
-        );
+        match message {
+            Message::TempPressureSensorReport(TempPressureSensorReport {
+                temperature,
+                pressure,
+            }) => {
+                println!(
+                    "Temperature: {} F - Pressure: {} atmosphere",
+                    temperature.get::<degree_fahrenheit>(),
+                    pressure.get::<atmosphere>()
+                );
+            }
+            Message::HumidityReport(HumidityReport { humidity }) => {
+                println!("Humidity: {}%", humidity.get::<percent>());
+            }
+        }
 
         write_lora(&mut lora, shared::Command::Led(false))?;
     }

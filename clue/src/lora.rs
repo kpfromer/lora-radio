@@ -1,5 +1,6 @@
 use crate::{prelude::*, LoraRadio};
 
+const ADDRESS: u8 = 1;
 /// In ms
 const LORA_TIMEOUT: i32 = 1000;
 
